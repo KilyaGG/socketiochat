@@ -42,16 +42,15 @@ io.on('connection', (socket) => {
   socket.broadcast.emit('new-chat-member', {id: socket.id});
 
   socket.on('new-chat-message', (messageData) => {
-
     let publicMessage = true;
-    if (messageData.type === 'user-message') {
+    if (messageData.type === 'message') {
       messageData.sender = socket.id;
     }
-    if (messageData.type === 'user-action') {
+    if (messageData.type === 'action') {
       messageData.sender = "server";
       publicMessage = false;
     }
-    if (messageData.type === 'user-command') {
+    if (messageData.type === 'command') {
       messageData.sender = socket.id;
       userCommandWorker(messageData);
     }
@@ -116,6 +115,7 @@ function userCommandWorker(data) {
   if (data.text === "/setadmin") {
     user.chatRole = "Admin";
     sendServerMessage('You are admin now', 'action', data.sender);
+    console.log(`${user.id} changed role to Admin.`)
     return;
   }
 

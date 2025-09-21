@@ -1,7 +1,18 @@
 <template>
   <div class="chat-container">
     <div class = "chat-content">
-      <div class="chatMessages" ref="chatMessagesContainer"></div>
+      <div class="chatMessages" ref="chatMessagesContainer">
+        <div 
+          v-for="(msg, index) in chatMessages" 
+          :key="index" 
+          class="chat-message"
+          :class="{
+            'action-user': msg.type === 'action',
+            'chat-command': msg.type === 'command'
+          }"
+          v-html="msg.text"
+        ></div>
+      </div>
       <div class="messageHolder">
         <input v-model="text" id="input1" @keypress.enter="userSendMessage" placeholder="Введите сообщение...">
         <button @click="userSendMessage()">➤</button>
@@ -16,11 +27,10 @@ import { io } from 'socket.io-client';
 
 const socket = io('http://localhost:3000');
 
-
-//variables
-
-
-
+// Реактивный массив сообщений
+const chatMessages = ref<Array<{text: string, type: string}>>([]);
+const text = ref('')
+const chatMessagesContainer = ref<HTMLDivElement | null>(null)
 
 // сокеты
 socket.on("connect", () => {
@@ -40,25 +50,21 @@ socket.on("connect", () => {
     });
 
     socket.on('data-user-join', (CHAT_DATA) => {
-      CHAT_DATA.CHAT_MESSAGES.forEach((message: MessageData) => {
+      CHAT_DATA.CHAT_MESSAGES.forEach((message: any) => {
         addMessageToList(message);
       });
     });
 
     socket.on('clear-chat', (data) => {
-      if (chatMessagesContainer.value) {
-        chatMessagesContainer.value.innerHTML = '';
-      }   
+      chatMessages.value = [];
     });
 
     socket.on('server-message', (data) => {
-      const messageElement = document.createElement("p");
-      messageElement.innerHTML = data.text;
-      messageElement.classList.add("chat-message");
-      if (data.type === "action") {
-        messageElement.classList.add("action-user")
-      }
-      message(messageElement);
+      chatMessages.value.push({
+        text: data.text,
+        type: data.type === "action" ? "action" : "message"
+      });
+      scrollToBottom();
     });
     
 
@@ -66,11 +72,11 @@ socket.on("connect", () => {
 
 class MessageData {
   text: string;
-  classes: DOMTokenList;
+  classes: string[]; // Изменено на массив строк
   sender: string;
   type: string;
 
-  constructor(text: string, classes: DOMTokenList, sender: string, type: string) {
+  constructor(text: string, classes: string[], sender: string, type: string) {
     this.text = text;
     this.sender = sender;
     this.classes = classes;
@@ -79,75 +85,95 @@ class MessageData {
 
 }
 
-const text = ref('')
-const chatMessagesContainer = ref<HTMLDivElement | null>(null)
-let messageType = 'user-message';
 const userSendMessage = () => {
   if (!text.value.trim()) return
   
   const messageText = text.value;
   text.value = "";
 
-
-  const messageElement = document.createElement("p");
-  messageElement.classList.add("chat-message");
+  let messageType = 'message';
+  const classes = ['chat-message'];
+  
   if (messageText.startsWith('/')) {
-    messageType = 'user-command';
-    messageElement.classList.add("chat-command");
+    messageType = 'command';
+    classes.push('chat-command');
   }
-  messageElement.innerHTML = messageText;
-  message(messageElement);
 
+  // Добавляем сообщение в реактивный массив
+  chatMessages.value.push({
+    text: messageText,
+    type: messageType
+  });
 
-  const messageData = new MessageData(messageElement.innerHTML, messageElement.classList, '', messageType);
+  scrollToBottom();
+
+  // Эмитим событие сокета (сохраняем оригинальную логику)
+  const messageData = new MessageData(messageText, classes, '', messageType);
   socket.emit('new-chat-message', messageData);
 }
 
 function sendMessageOnUserAction(username: string, action: string) {
-  const messageElement = document.createElement("p");
-  messageElement.classList.add("chat-message");
-  messageElement.classList.add("action-user");
+  let messageText = '';
+  
   if (action === "join") {
     console.log(`User joined ${username}`);
-    messageElement.innerHTML = `User ${username} just joined`;
+    messageText = `User ${username} just joined`;
   }
   if (action === "left") {
     console.log(`User left ${username}`);
-    messageElement.innerHTML = `User ${username} left`;    
+    messageText = `User ${username} left`;    
   }
   if (action === undefined || action === null || typeof(action) != "string") {
     console.error(`Undefined action on user ${username}`);
-    messageElement.innerHTML = `User ${username} did something weird!`;  
+    messageText = `User ${username} did something weird!`;  
   }
-  const messageData = new MessageData(messageElement.innerHTML, messageElement.classList, '', 'user-action');
+
+  // Добавляем action сообщение
+  chatMessages.value.push({
+    text: messageText,
+    type: 'action'
+  });
+
+  scrollToBottom();
+
+  // Эмитим событие сокета (сохраняем оригинальную логику)
+  const messageData = new MessageData(
+    messageText, 
+    ['chat-message', 'action-user'], 
+    '', 
+    'user-action'
+  );
   socket.emit('new-chat-message', messageData);
-  message(messageElement);
 }
 
 function addMessageToList(messageData: MessageData) {
-    const messageElement = document.createElement("p");
-    for (const key in messageData.classes) {
-      if (messageData.classes.hasOwnProperty(key)) {
-          const value = messageData.classes[key];
-          messageElement.classList.add(value)
-      }
-    }
-    messageElement.innerHTML = messageData.text;
-    message(messageElement);
-}
-
-function message(messageElement: HTMLElement) {
-  if (chatMessagesContainer.value) {
-      chatMessagesContainer.value.appendChild(messageElement);
-      nextTick(() => {
-        chatMessagesContainer.value?.scrollTo({
-          top: chatMessagesContainer.value.scrollHeight,
-          behavior: 'smooth'
-        });
-      });
+  // Определяем тип сообщения на основе classes (теперь это массив строк)
+  let messageType = 'message';
+  if (messageData.classes.includes('action-user')) {
+    messageType = 'action';
+  } else if (messageData.classes.includes('chat-command')) {
+    messageType = 'command';
   }
+
+  // Добавляем сообщение в реактивный массив
+  chatMessages.value.push({
+    text: messageData.text,
+    type: messageType
+  });
+
+  scrollToBottom();
 }
 
+function scrollToBottom() {
+  nextTick(() => {
+    if (chatMessagesContainer.value) {
+      chatMessagesContainer.value.scrollTo({
+        top: chatMessagesContainer.value.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  });
+}
 
 </script>
 

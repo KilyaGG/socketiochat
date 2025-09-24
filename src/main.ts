@@ -3,7 +3,6 @@ import App from './App.vue'
 
 const app = createApp(App)
 
-
 let KeyPressed: string;
 
 document.addEventListener('keydown', (event) => {

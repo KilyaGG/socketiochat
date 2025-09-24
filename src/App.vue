@@ -1,7 +1,7 @@
 <template>
   <div class="chat-container">
     <div class = "chat-content">
-      <div class="chatMessages" ref="chatMessagesContainer">
+      <div class="chatMessages" ref="chatMessagesContainer" @scroll="handleChatScroll">
         <div 
           v-for="(msg, index) in chatMessages" 
           :key="index" 
@@ -22,7 +22,7 @@
 </template>
 
 <script lang="ts" setup>
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 import { io } from 'socket.io-client';
 
 const socket = io('http://localhost:3000');
@@ -31,11 +31,14 @@ const socket = io('http://localhost:3000');
 const chatMessages = ref<Array<{text: string, type: string}>>([]);
 const text = ref('')
 const chatMessagesContainer = ref<HTMLDivElement | null>(null)
+let USER_CURRENT_SESSION_ID: string;
+let lastChatContainerSize: number;
 
 // сокеты
 socket.on("connect", () => {
 
     console.log(socket.id);
+    USER_CURRENT_SESSION_ID = <string>socket.id;
 
     socket.on('new-chat-member', (data) => {
       sendMessageOnUserAction(data.id, 'join');
@@ -49,10 +52,22 @@ socket.on("connect", () => {
       addMessageToList(messageData);
     });
 
-    socket.on('data-user-join', (CHAT_DATA) => {
-      CHAT_DATA.CHAT_MESSAGES.forEach((message: any) => {
+    socket.on('data-user-join', (CHAT_JSON) => {
+      const parsedData = JSON.parse(CHAT_JSON);
+      const chatMap = new Map(parsedData);
+      for (const [key, value] of chatMap as Map<string, MessageData>) {
+        const message = new MessageData(value.text, value.classes, value.sender, value.type);
         addMessageToList(message);
-      });
+      }
+    });
+
+    socket.on('load-new-messages', (CHAT_JSON) => {
+      const parsedData = JSON.parse(CHAT_JSON);
+      const chatMap = new Map(parsedData);
+      for (const [key, value] of (Array.from(chatMap) as [string, MessageData][]).reverse()) {
+        const message = new MessageData(value.text, value.classes, value.sender, value.type);
+        addMessageToList(message, true);
+      }
     });
 
     socket.on('clear-chat', (data) => {
@@ -84,6 +99,13 @@ class MessageData {
   }
 
 }
+
+onMounted(() => {
+  if (chatMessagesContainer.value) {
+    lastChatContainerSize = chatMessagesContainer.value.scrollHeight;
+    console.log('Начальная высота элемента:', lastChatContainerSize);
+  }
+});
 
 const userSendMessage = () => {
   if (!text.value.trim()) return
@@ -146,7 +168,7 @@ function sendMessageOnUserAction(username: string, action: string) {
   socket.emit('new-chat-message', messageData);
 }
 
-function addMessageToList(messageData: MessageData) {
+function addMessageToList(messageData: MessageData, addToTop = false) {
   // Определяем тип сообщения на основе classes (теперь это массив строк)
   let messageType = 'message';
   if (messageData.classes.includes('action-user')) {
@@ -155,14 +177,35 @@ function addMessageToList(messageData: MessageData) {
     messageType = 'command';
   }
 
-  // Добавляем сообщение в реактивный массив
-  chatMessages.value.push({
-    text: messageData.text,
-    type: messageType
-  });
+  if (!addToTop) {
+    chatMessages.value.push({
+      text: messageData.text,
+      type: messageType
+    });
 
-  scrollToBottom();
+    scrollToBottom();
+  }
+  else {
+    chatMessages.value.unshift({
+      text: messageData.text,
+      type: messageType
+    });    
+  }
 }
+
+const handleChatScroll = (event: Event) => {
+  const target = event.target as HTMLElement;
+  if (target.scrollHeight === lastChatContainerSize) {
+    if (target.scrollTop <= target.scrollHeight/10) {
+      socket.emit('request-new-messages', {id: USER_CURRENT_SESSION_ID});
+      console.log("LMAOLMAO");
+    }
+    console.log(`Scroll Y: ${target.scrollTop} Element Height: ${target.scrollHeight}`);
+  }
+  else {
+    lastChatContainerSize = target.scrollHeight;
+  }
+};
 
 function scrollToBottom() {
   nextTick(() => {
